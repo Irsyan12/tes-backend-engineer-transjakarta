@@ -1,79 +1,332 @@
 # Fleet Management System - Transjakarta Technical Test
 
-Sistem manajemen armada (*Fleet Management*) backend yang dirancang menggunakan bahasa pemrograman **Golang**, menerapkan pola **Clean Architecture**, dan dikemas secara rapi menggunakan **Docker**.
-
-## Fitur Utama
-1. **MQTT Subscriber**: Menerima koordinat GPS armada secara *real-time* via protokol MQTT.
-2. **PostgreSQL Storage**: Menyimpan jejak riwayat pergerakan kendaraan ke dalam database rasional.
-3. **REST API**: Menyediakan *endpoint* untuk melihat lokasi terakhir dan riwayat perjalanan armada.
-4. **Geofencing & RabbitMQ**: Otomatis mendeteksi jika kendaraan memasuki radius 50 meter dari titik tertentu (Monas), dan seketika membunyikan peringatan (*alert*) melalui RabbitMQ.
-
-## Teknologi yang Digunakan
-- **Bahasa**: Golang (1.24+)
-- **Framework Web**: Gin Gonic
-- **Database**: PostgreSQL 16 (diakses menggunakan pgxpool)
-- **Message Broker (MQTT)**: Eclipse Mosquitto
-- **Message Queue (AMQP)**: RabbitMQ 3 Management
-- **Infrastruktur**: Docker & Docker Compose
-
-## Arsitektur Sistem (All-in-One)
-Aplikasi didesain untuk menghindari *over-engineering*. Meski fitur-fiturnya (API, MQTT Sub, RabbitMQ Worker) seolah-olah butuh *microservices* terpisah, sistem ini dirakit secara padu dalam **1 Aplikasi Tunggal** yang berjalan harmonis secara bersamaan di latar belakang (*background*) memanfaatkan *Goroutine* bawaan Golang.
+Backend Fleet Management System yang dibangun menggunakan **Golang**, **Gin**, **PostgreSQL**, **MQTT (Mosquitto)**, dan **RabbitMQ**. Sistem ini menerima data lokasi kendaraan secara real-time melalui MQTT, menyimpannya ke PostgreSQL, menyediakan REST API untuk monitoring lokasi kendaraan, serta menghasilkan event geofence menggunakan RabbitMQ.
 
 ---
 
-## Cara Menjalankan Aplikasi
+# Features
 
-### 1. Prasyarat (*Prerequisites*)
-Pastikan di komputer Anda sudah terinstal perangkat lunak berikut:
-- **Docker Desktop** (atau Docker Engine + Docker Compose)
-- **Golang** (Versi 1.24 atau ke atas)
-- **Postman** (untuk pengujian API)
+### 1. MQTT Subscriber
 
-### 2. Memulai Infrastruktur (Otomatis)
-Aplikasi backend, beserta database, dan *message broker* telah dikonfigurasi dalam satu file Compose.
-Buka terminal di dalam folder proyek ini, lalu jalankan:
+Menerima data lokasi kendaraan secara real-time melalui MQTT Topic:
 
-```bash
-docker-compose up -d --build
+```text
+/fleet/vehicle/{vehicle_id}/location
 ```
 
-*Sistem akan otomatis mengunduh image, melakukan kompilasi build Golang, menjalankan kontainer, serta membuat tabel database (Auto-Migration).*
+### 2. PostgreSQL Storage
 
-### 3. Cek Status Container
-Untuk memastikan semuanya berjalan normal:
+Menyimpan seluruh histori lokasi kendaraan ke database PostgreSQL.
+
+### 3. REST API
+
+Menyediakan endpoint untuk:
+
+* Mendapatkan lokasi terakhir kendaraan.
+* Mendapatkan riwayat perjalanan kendaraan berdasarkan rentang waktu.
+
+### 4. Geofence Detection
+
+Menggunakan Rumus Haversine untuk menghitung jarak kendaraan terhadap titik geofence.
+
+Jika kendaraan berada dalam radius ≤ 50 meter dari titik geofence, sistem akan mengirim event ke RabbitMQ.
+
+### 5. RabbitMQ Event Processing
+
+Mengirim dan memproses event geofence menggunakan RabbitMQ Exchange dan Queue.
+
+---
+
+# Technology Stack
+
+| Component        | Technology              |
+| ---------------- | ----------------------- |
+| Language         | Golang 1.24+            |
+| Web Framework    | Gin Gonic               |
+| Database         | PostgreSQL 16           |
+| MQTT Broker      | Eclipse Mosquitto       |
+| Message Queue    | RabbitMQ 3 Management   |
+| Database Driver  | pgxpool                 |
+| Containerization | Docker & Docker Compose |
+
+---
+
+# System Architecture
+
+![Architecture](docs/architecture.png)
+
+Flow aplikasi:
+
+1. Mock Publisher mengirim data GPS kendaraan ke MQTT Broker (Mosquitto).
+2. Backend Golang menerima data melalui MQTT Subscriber.
+3. Data lokasi disimpan ke PostgreSQL.
+4. Backend melakukan pengecekan Geofence menggunakan Rumus Haversine.
+5. Jika kendaraan memasuki area geofence, backend mengirim event ke RabbitMQ.
+6. RabbitMQ Worker memproses event geofence.
+7. REST API menyediakan akses ke lokasi terakhir dan histori kendaraan.
+
+---
+
+# Project Structure
+
+```text
+fleet-management/
+├── cmd
+│   ├── api                 # Entry point backend API
+│   └── publisher           # Mock GPS Publisher
+│
+├── deployments
+│   └── mosquitto          # MQTT configuration
+│
+├── internal
+│   ├── config             # Configuration loader
+│   ├── database           # Database connection
+│   ├── geofence           # Haversine calculation
+│   ├── handler            # HTTP handlers
+│   ├── middleware         # HTTP middleware
+│   ├── model              # Domain models
+│   ├── mqtt               # MQTT subscriber
+│   ├── rabbitmq           # Producer & Worker
+│   ├── repository
+│   │   └── postgres       # PostgreSQL repository
+│   ├── service            # Business logic
+│   └── services
+│
+├── migrations             # Database migration
+├── postman                # Postman collection
+│
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+---
+
+# Environment Variables
+
+Contoh konfigurasi tersedia pada file `.env.example`.
+
+| Variable          | Default Value        |
+| ----------------- | -------------------- |
+| APP_ENV           | development          |
+| APP_PORT          | 3000                 |
+| DB_HOST           | localhost            |
+| DB_PORT           | 5432                 |
+| DB_USER           | postgres             |
+| DB_PASSWORD       | postgres             |
+| DB_NAME           | fleet_management     |
+| MQTT_BROKER       | tcp://localhost:1883 |
+| RABBITMQ_HOST     | localhost            |
+| RABBITMQ_PORT     | 5672                 |
+| RABBITMQ_USER     | guest                |
+| RABBITMQ_PASSWORD | guest                |
+| GEOFENCE_LAT      | -6.2088              |
+| GEOFENCE_LNG      | 106.8456             |
+| GEOFENCE_RADIUS   | 50                   |
+
+---
+
+# Getting Started
+
+## Prerequisites
+
+Pastikan sudah terinstall:
+
+* Docker Desktop
+* Docker Compose
+* Golang 1.24+
+* Postman (opsional)
+
+---
+
+## Run Application
+
+Clone repository:
+
+```bash
+git clone <repository-url>
+cd fleet-management
+```
+
+Jalankan seluruh infrastruktur:
+
+```bash
+docker compose up -d --build
+```
+
+Perintah tersebut akan menjalankan:
+
+* Backend API
+* PostgreSQL
+* RabbitMQ
+* Eclipse Mosquitto
+
+---
+
+## Verify Containers
+
 ```bash
 docker ps
 ```
-Anda seharusnya melihat 4 kontainer berjalan: `fleet_api`, `fleet_postgres`, `fleet_rabbitmq`, dan `fleet_mosquitto`.
 
-Untuk melihat aktivitas (log) dari otak aplikasi kita secara *live*:
+Container yang seharusnya berjalan:
+
+```text
+fleet_api
+fleet_postgres
+fleet_rabbitmq
+fleet_mosquitto
+```
+
+Lihat log backend:
+
 ```bash
 docker logs -f fleet_api
 ```
 
-### 4. Menjalankan Simulasi Kendaraan (Mock Publisher)
-Kami telah menyediakan skrip *bot* khusus untuk menyimulasikan bus yang sedang bergerak menuju pusat *Geofence*.
-Buka tab terminal/CMD **baru**, dan jalankan:
+Jika berhasil:
+
+```text
+PostgreSQL connected successfully
+RabbitMQ Worker started
+MQTT Connected Successfully
+Server starting on port 3000
+```
+
+---
+
+# Run Mock Vehicle Publisher
+
+Buka terminal baru:
 
 ```bash
 go run cmd/publisher/main.go
 ```
-*Perhatikan terminal `docker logs -f fleet_api` Anda! Anda akan melihat secara visual sistem menerima data MQTT, mengeksekusi Rumus Haversine, lalu memicu Alarm RabbitMQ.*
+
+Publisher akan mengirim data lokasi kendaraan setiap 2 detik ke MQTT Broker.
 
 ---
 
-## Pengujian REST API
+# API Documentation
 
-Anda bisa melakukan uji coba pemanggilan data melalui Postman atau browser:
+Base URL:
 
-### 1. Mengecek Lokasi Terkini Kendaraan
-**GET** `http://localhost:3000/vehicles/B1234XYZ/location`
+```text
+http://localhost:3000
+```
 
-### 2. Melihat Riwayat Lengkap Kendaraan
-**GET** `http://localhost:3000/vehicles/B1234XYZ/history?start=1700000000&end=2000000000`
+---
 
-### 3. Dashboard Kelinci (RabbitMQ UI)
-Buka browser dan akses antarmuka administrator RabbitMQ:
-**URL:** `http://localhost:15672`  
-**Username:** `guest` | **Password:** `guest`  
-*(Cek tab "Queues" untuk melihat lonjakan grafik pesan `geofence_alerts` masuk!)*
+## Health Check
+
+```http
+GET /health
+```
+
+Response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+---
+
+## Get Latest Vehicle Location
+
+```http
+GET /vehicles/B1234XYZ/location
+```
+
+Response:
+
+```json
+{
+  "vehicle_id": "B1234XYZ",
+  "latitude": -6.2088,
+  "longitude": 106.8456,
+  "timestamp": 1715003456
+}
+```
+
+---
+
+## Get Vehicle History
+
+```http
+GET /vehicles/B1234XYZ/history?start=1700000000&end=2000000000
+```
+
+Response:
+
+```json
+[
+  {
+    "vehicle_id": "B1234XYZ",
+    "latitude": -6.2088,
+    "longitude": 106.8456,
+    "timestamp": 1715003456
+  }
+]
+```
+
+---
+
+# RabbitMQ Management UI
+
+RabbitMQ Management Dashboard dapat diakses melalui:
+
+```text
+http://localhost:15672
+```
+
+Credential:
+
+```text
+Username : guest
+Password : guest
+```
+
+Queue yang digunakan:
+
+```text
+geofence_alerts
+```
+
+Exchange yang digunakan:
+
+```text
+fleet.events
+```
+
+---
+
+# Postman Collection
+
+Postman Collection tersedia pada folder:
+
+```text
+postman/
+```
+
+Import collection tersebut ke Postman untuk menguji seluruh endpoint API.
+
+---
+
+# Technical Test Requirements Coverage
+
+| Requirement              | Status |
+| ------------------------ | ------ |
+| MQTT Subscriber          | ✅      |
+| PostgreSQL Storage       | ✅      |
+| REST API Latest Location | ✅      |
+| REST API History         | ✅      |
+| Geofence Detection       | ✅      |
+| RabbitMQ Producer        | ✅      |
+| RabbitMQ Worker          | ✅      |
+| Mock Vehicle Publisher   | ✅      |
+| Docker Compose           | ✅      |
+
+---
